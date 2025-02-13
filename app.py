@@ -103,20 +103,20 @@ def main():
             st.error("Please select a duration of 15s or less.")
             return
 
-        # 3) Preview Subclip ボタン
-        if st.button("Preview Subclip"):
-            with st.spinner("FFmpeg cutting & rotating..."):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                    preview_path = tmp.name
-
-                ffmpeg_subclip_rotate(
-                    input_path,
-                    preview_path,
-                    start_time,
-                    end_time,
-                    rotation
-                )
-                st.video(preview_path)
+        # （Preview Subclip ボタンをコメントアウト）
+        # if st.button("Preview Subclip"):
+        #     with st.spinner("FFmpeg cutting & rotating..."):
+        #         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        #             preview_path = tmp.name
+        #
+        #         ffmpeg_subclip_rotate(
+        #             input_path,
+        #             preview_path,
+        #             start_time,
+        #             end_time,
+        #             rotation
+        #         )
+        #         st.video(preview_path)
 
         # 4) Generate GIF ボタン
         if st.button("Generate GIF"):
@@ -133,8 +133,7 @@ def main():
                     rotation
                 )
 
-                # ここから先は、以前のGIF設定(幅240px, fps=5, colors=32等)に合わせるなら
-                # お好みで変更してください。以下は例として軽量な設定を使用。
+                # ここから先は、前回同様に軽量化設定 (幅240px, fps=5, colors=32) を使用
                 subclip_fixed = mp.VideoFileClip(fixed_mp4_path)
                 if subclip_fixed.w > 240:
                     new_h = int(subclip_fixed.h * 240 / subclip_fixed.w)
@@ -158,7 +157,7 @@ def main():
                 with open(gif_temp_path, "rb") as f:
                     gif_bytes = f.read()
 
-                st.image(gif_bytes, caption="Converted GIF", use_container_width=True)
+                st.image(gif_bytes, caption="Converted GIF (max width=240)", use_container_width=True)
                 st.download_button(
                     label="Download GIF",
                     data=gif_bytes,
