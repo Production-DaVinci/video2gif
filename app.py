@@ -12,7 +12,7 @@ def ffmpeg_subclip_rotate(
     rotation: int
 ):
     """
-    FFmpeg を使い、[start, end]秒の区間を切り出し & 回転を補正して MP4 出力。
+    FFmpeg を使い、[start, end]秒の区間を切り出し & 回転を補正した MP4 を出力。
     回転メタデータ (rotate=0) と map_metadata=-1 で余計なメタデータを消去。
     """
     vf_filter = None
@@ -45,7 +45,8 @@ def ffmpeg_subclip_rotate(
     subprocess.run(cmd, check=True)
 
 def main():
-    st.title("Video to GIF Converter (Extra Compact)")
+    st.set_page_config(page_title="Video to GIF Converter by Production da Vinci Inc.")
+    st.title("Video to GIF Converter by Production da Vinci Inc.")
 
     uploaded_file = st.file_uploader(
         "Upload a video file (up to 100MB)",
@@ -75,7 +76,23 @@ def main():
         st.write(f"Detected rotation: {rotation} deg")
         st.write(f"Video duration: {duration:.2f} seconds")
 
-        # スライダーで開始・終了時間を指定 (最大15秒)
+        # 1) まず「オリジナル動画」を正しい向きに補正した全体プレビューを表示
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_whole:
+            oriented_whole_path = tmp_whole.name
+
+        # 動画全体 [0, duration] を回転補正
+        ffmpeg_subclip_rotate(
+            input_path,
+            oriented_whole_path,
+            0,
+            duration,
+            rotation
+        )
+
+        st.write("### Original Video (Oriented)")
+        st.video(oriented_whole_path)
+
+        # 2) サブクリップの区間指定 (最大15秒)
         start_time = st.slider("Start Time (s)", 0.0, float(duration), 0.0, 0.1)
         end_time = st.slider("End Time (s)", 0.0, float(duration), min(duration, 15.0), 0.1)
 
@@ -86,7 +103,7 @@ def main():
             st.error("Please select a duration of 15s or less.")
             return
 
-        # プレビュー用ボタン
+        # 3) Preview Subclip ボタン
         if st.button("Preview Subclip"):
             with st.spinner("FFmpeg cutting & rotating..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -101,10 +118,10 @@ def main():
                 )
                 st.video(preview_path)
 
-        # GIF生成ボタン
+        # 4) Generate GIF ボタン
         if st.button("Generate GIF"):
             with st.spinner("Generating GIF..."):
-                # 1) FFmpegで回転補正＋サブクリップしたMP4を生成
+                # FFmpegで回転補正＋サブクリップしたMP4を生成
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
                     fixed_mp4_path = tmp.name
 
@@ -116,23 +133,23 @@ def main():
                     rotation
                 )
 
-                # 2) 生成されたMP4をMoviePyで開き、幅が240を超える場合は縮小
+                # ここから先は、以前のGIF設定(幅240px, fps=5, colors=32等)に合わせるなら
+                # お好みで変更してください。以下は例として軽量な設定を使用。
                 subclip_fixed = mp.VideoFileClip(fixed_mp4_path)
                 if subclip_fixed.w > 240:
                     new_h = int(subclip_fixed.h * 240 / subclip_fixed.w)
                     subclip_fixed = subclip_fixed.resize((240, new_h))
 
-                # 3) GIFを出力 (fps=5, colors=32)
                 gif_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".gif")
                 gif_temp_path = gif_temp.name
                 gif_temp.close()
 
                 subclip_fixed.write_gif(
                     gif_temp_path,
-                    fps=5,          # 5 FPS → さらに軽量化
+                    fps=5,
                     program="ffmpeg",
-                    opt="nq",       # カラーパレット最適化
-                    colors=32       # 32色まで減色
+                    opt="nq",
+                    colors=32
                 )
 
                 subclip_fixed.close()
@@ -141,7 +158,7 @@ def main():
                 with open(gif_temp_path, "rb") as f:
                     gif_bytes = f.read()
 
-                st.image(gif_bytes, caption="Converted GIF (max width=240)", use_container_width=True)
+                st.image(gif_bytes, caption="Converted GIF", use_container_width=True)
                 st.download_button(
                     label="Download GIF",
                     data=gif_bytes,
@@ -149,7 +166,6 @@ def main():
                     mime="image/gif"
                 )
 
-                # 後片付け
                 os.remove(gif_temp_path)
                 if os.path.exists(fixed_mp4_path):
                     os.remove(fixed_mp4_path)
@@ -157,10 +173,11 @@ def main():
         # 後片付け
         if os.path.exists(input_path):
             os.remove(input_path)
+        if os.path.exists(oriented_whole_path):
+            os.remove(oriented_whole_path)
 
     else:
         st.write("Please upload a video file.")
-
 
 if __name__ == "__main__":
     main()
