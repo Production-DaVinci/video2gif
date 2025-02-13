@@ -2,19 +2,17 @@ import streamlit as st
 import moviepy.editor as mp
 import tempfile
 import os
-import io
 
 def main():
     st.title("Video to GIF Converter")
 
-    # 1. ファイルアップロード
     uploaded_file = st.file_uploader(
-        "Upload a video file (up to 100MB)", 
+        "Upload a video file (up to 100MB)",
         type=["mp4", "mov", "avi", "m4v", "mpeg", "mkv"]
     )
 
     if uploaded_file is not None:
-        # ファイルサイズ確認
+        # ファイルサイズチェック
         uploaded_file.seek(0, os.SEEK_END)
         file_size = uploaded_file.tell()
         uploaded_file.seek(0)
@@ -22,25 +20,53 @@ def main():
             st.error("File size exceeds 100MB. Please upload a smaller file.")
             return
 
-        # 動画のプレビュー
-        st.video(uploaded_file)
-
-        # 一時ファイルに保存 (moviepyはファイルパスを必要とすることが多いため)
+        # 一時ファイルへ書き出し
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
             tmp_file.write(uploaded_file.read())
-            tmp_file_path = tmp_file.name
+            original_file_path = tmp_file.name
 
-        # 2. 動画読み込みとメタ情報取得
-        clip = mp.VideoFileClip(tmp_file_path)
-        duration = clip.duration  # 動画の長さ(秒)
+        # 1) MoviePyで動画読込み
+        clip = mp.VideoFileClip(original_file_path)
 
-        # 3. スライダーで切り出し区間を指定（最大15秒まで）
-        st.write("Select the start and end times (up to 15 seconds range).")
-        max_end = min(duration, 15.0)  # 上限15秒か、動画が15秒未満なら動画の長さ
+        # 2) iPhone動画の回転メタデータを取得 (0, 90, 180, 270 のいずれか)
+        rotation = getattr(clip, 'rotation', 0)
+
+        # 3) 必要に応じて -rotation 方向に回転 (物理フレームを回転)
+        #    expand=True で縦横のピクセル数を正しく再計算する
+        if rotation == 90:
+            clip = clip.rotate(-90, expand=True)
+        elif rotation == 180:
+            clip = clip.rotate(180, expand=True)
+        elif rotation == 270:
+            clip = clip.rotate(90, expand=True)
+
+        # 4) 回転メタデータを強制的に 0 にするために
+        #    ffmpeg_params で "rotate=0" を指定して再エンコード
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as oriented_tmp:
+            oriented_file_path = oriented_tmp.name
+
+        # エンコード時に -metadata rotate=0 を付与し、回転メタデータを消去
+        clip.write_videofile(
+            oriented_file_path,
+            codec='libx264',
+            audio=False,
+            verbose=False,
+            logger=None,
+            ffmpeg_params=['-metadata', 'rotate=0']  # ← これで回転情報を0に
+        )
+
+        # 5) 正しい向きになった動画をプレビュー
+        st.write("### Original Video (Fixed Orientation)")
+        st.video(oriented_file_path)
+
+        # 動画長さを取得
+        duration = clip.duration
+
+        # 6) スライダーでサブクリップ区間を指定
+        st.write("Select the start and end times (up to 15 seconds).")
         start_time = st.slider("Start time (seconds)", 0.0, float(duration), 0.0, 0.1)
         end_time = st.slider("End time (seconds)", 0.0, float(duration), min(duration, 15.0), 0.1)
 
-        # start_time <= end_time かつ (end_time - start_time) <= 15 となるように制限
         if end_time < start_time:
             st.error("End time must be greater than start time.")
             return
@@ -50,34 +76,53 @@ def main():
 
         st.write(f"**Selected range**: {start_time:.2f} - {end_time:.2f} seconds")
 
-        # GIF作成ボタン
+        # 7) サブクリップをプレビューする
+        if st.button("Preview Subclip"):
+            with st.spinner("Generating subclip preview..."):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as subclip_temp:
+                    subclip_path = subclip_temp.name
+
+                # 選択範囲の subclip
+                sub_clip = clip.subclip(start_time, end_time)
+
+                # 音声不要なら audio=False
+                sub_clip.write_videofile(
+                    subclip_path,
+                    codec='libx264',
+                    audio=False,
+                    verbose=False,
+                    logger=None,
+                    ffmpeg_params=['-metadata', 'rotate=0']
+                )
+                sub_clip.close()
+
+                st.write("### Subclip Preview")
+                st.video(subclip_path)
+
+        # 8) GIF生成
         if st.button("Generate GIF"):
             with st.spinner("Converting to GIF..."):
-                # 4. MoviePy でサブクリップ作成
-                subclip = clip.subclip(start_time, end_time)
+                gif_subclip = clip.subclip(start_time, end_time)
 
-                # 5. リサイズ（横幅を最大640pxにしてアスペクト比を保つ）
-                if subclip.w > 640:
-                    new_height = int(subclip.h * 640 / subclip.w)
-                    subclip = subclip.resize((640, new_height))
+                # 横幅 640px を超えるなら縮小
+                if gif_subclip.w > 640:
+                    new_height = int(gif_subclip.h * 640 / gif_subclip.w)
+                    gif_subclip = gif_subclip.resize((640, new_height))
 
-                # 6. GIF生成
-                # 一時ファイルに出力してから読み込む
+                # GIF一時ファイル
                 gif_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".gif")
                 gif_temp_path = gif_temp.name
                 gif_temp.close()
 
-                # fps=15, program='ImageMagick' を指定 (or 'ffmpeg')
-                subclip.write_gif(gif_temp_path, fps=15, program="ffmpeg")
+                gif_subclip.write_gif(gif_temp_path, fps=15, program="ffmpeg")
 
-                # 7. GIFの表示 & ダウンロード用バイナリ取得
+                # GIFを読み込んで表示
                 with open(gif_temp_path, "rb") as f:
                     gif_bytes = f.read()
 
-                # GIFを画面に表示
-                st.image(gif_bytes, caption="Converted GIF", use_column_width=True)
+                gif_subclip.close()
 
-                # ダウンロードボタン
+                st.image(gif_bytes, caption="Converted GIF", use_container_width=True)
                 st.download_button(
                     label="Download GIF",
                     data=gif_bytes,
@@ -85,14 +130,18 @@ def main():
                     mime="image/gif"
                 )
 
-                # 後始末
-                clip.close()
-                subclip.close()
                 os.remove(gif_temp_path)
-                os.remove(tmp_file_path)
+
+        # 後処理
+        clip.close()
+        if os.path.exists(original_file_path):
+            os.remove(original_file_path)
+        if os.path.exists(oriented_file_path):
+            os.remove(oriented_file_path)
 
     else:
         st.write("Please upload a video file.")
+
 
 if __name__ == "__main__":
     main()
